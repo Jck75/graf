@@ -101,9 +101,19 @@ fn dispatch_action(
             *running = false;
         }
         EventAction::OpenFile(path) => {
-            guard.suspend()?;
-            open_file_in_editor(&path, config);
-            guard.resume()?;
+            if let Some(ref pick_path) = reload_ctx.cli.pick {
+                let full_path = reload_ctx.cwd.join(&path);
+                if let Ok(p) = full_path.canonicalize() {
+                    let path_str = p.to_string_lossy();
+                    let path_str = path_str.strip_prefix(r"\\?\").unwrap_or(&path_str);
+                    let _ = std::fs::write(pick_path, path_str.as_bytes());
+                    *running = false;
+                }
+            } else {
+                guard.suspend()?;
+                open_file_in_editor(&path, config, reload_ctx.cwd);
+                guard.resume()?;
+            }
         }
         EventAction::ReloadConfig => {
             let old_physics = config.physics.clone();
@@ -378,16 +388,15 @@ fn frame_area(guard: &TerminalGuard) -> Result<ratatui::layout::Rect> {
     Ok(ratatui::layout::Rect::new(0, 0, size.width, size.height))
 }
 
-fn open_file_in_editor(relative_path: &str, config: &config::GrafConfig) {
-    let cwd = std::env::current_dir().unwrap_or_default();
-    let full_path = cwd.join(relative_path);
+fn open_file_in_editor(relative_path: &str, config: &config::GrafConfig, base_dir: &std::path::Path) {
+    let full_path = base_dir.join(relative_path);
 
     let full_path = match full_path.canonicalize() {
         Ok(p) => p,
         Err(_) => return,
     };
 
-    if !full_path.starts_with(&cwd) {
+    if !full_path.starts_with(base_dir) {
         return;
     }
 
@@ -397,7 +406,18 @@ fn open_file_in_editor(relative_path: &str, config: &config::GrafConfig) {
         std::env::var("EDITOR").unwrap_or_else(|_| "vim".to_string())
     };
 
-    if let Err(e) = std::process::Command::new(&editor).arg(&full_path).status() {
+    let mut parts = editor.split_whitespace();
+    let cmd = match parts.next() {
+        Some(c) => c,
+        None => return,
+    };
+    let mut command = std::process::Command::new(cmd);
+    for arg in parts {
+        command.arg(arg);
+    }
+    command.arg(&full_path);
+
+    if let Err(e) = command.status() {
         eprintln!("Failed to open editor '{}': {}", editor, e);
     }
 }

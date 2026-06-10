@@ -75,4 +75,8 @@ pub struct Cli {
     /// Editor command to open files
     #[arg(long)]
     pub editor: Option<String>,
+
+    /// Write selected file path to this file and exit instead of opening an editor
+    #[arg(long)]
+    pub pick: Option<PathBuf>,
 }
